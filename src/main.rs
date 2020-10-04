@@ -23,6 +23,21 @@ pub enum OutFormat {
     Text,
 }
 
+const BASE_URL: &str = "https://xkcd.com";
+const LATEST_COMIC: usize = 0;
+
+struct XkcdClient {
+    args: Args,
+}
+
+impl XkcdClient {
+    fn new(args: Args) -> Self {
+        XkcdClient { args }
+    }
+}
+
 fn main() {
-    println!("Hello, world!");
+    let args = Args::parse();
+    let client = XkcdClient::new(args);
+    // ... todo
 }
