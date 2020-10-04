@@ -1,7 +1,10 @@
 use anyhow::Result;
 use clap::Clap;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
+use std::fmt;
+use std::time::Duration;
+use url::Url;
 
 /// A utility to grab XKCD comics
 #[derive(Clap)]
@@ -13,8 +16,8 @@ pub struct Args {
     #[clap(long, short, arg_enum, default_value = "text")]
     pub output: OutFormat,
     /// The comic to load
-    #[clap(long, short, default_value = "0")]
-    pub num: usize,
+    #[clap(long, short)]
+    pub num: Option<usize>,
     /// Save image file to current directory
     #[clap(long, short)]
     pub save: bool,
@@ -24,23 +27,6 @@ pub struct Args {
 pub enum OutFormat {
     Json,
     Text,
-}
-
-const BASE_URL: &str = "https://xkcd.com";
-const LATEST_COMIC: usize = 0;
-
-struct XkcdClient {
-    args: Args,
-}
-
-impl XkcdClient {
-    fn new(args: Args) -> Self {
-        XkcdClient { args }
-    }
-
-    fn run(&self) -> Result<()> {
-        Ok(())
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -66,6 +52,7 @@ impl TryFrom<String> for ComicResponse {
     }
 }
 
+#[derive(Serialize)]
 struct Comic {
     title: String,
     num: usize,
@@ -83,6 +70,73 @@ impl From<ComicResponse> for Comic {
             desc: cr.alt,
             img_url: cr.img,
         }
+    }
+}
+
+impl Comic {
+    fn save(&self) -> Result<()> {
+        let url = Url::parse(&*self.img_url)?;
+        let img_name = url.path_segments().unwrap().last().unwrap();
+        let p = std::env::current_dir()?;
+        let p = p.join(img_name);
+        let resp = reqwest::blocking::get(&self.img_url)?;
+        std::fs::write(p, &*resp.bytes()?).map_err(|e| e.into())
+    }
+
+    fn print(&self, of: OutFormat) -> Result<()> {
+        match of {
+            OutFormat::Json => println!("{}", self),
+            OutFormat::Text => println!("{}", serde_json::to_string(self)?),
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Comic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Title: {}\n\
+            Comic No: {}\n\
+            Date: {}\n\
+            Description: {}\n\
+            Image: {}\n",
+            self.title, self.num, self.date, self.desc, self.img_url
+        )
+    }
+}
+
+const BASE_URL: &str = "https://xkcd.com";
+const INFO_0_JSON: &str = "info.0.json";
+
+struct XkcdClient {
+    args: Args,
+}
+
+impl XkcdClient {
+    fn new(args: Args) -> Self {
+        XkcdClient { args }
+    }
+
+    fn run(&self) -> Result<()> {
+        let url = if let Some(n) = self.args.num {
+            format!("{}/{}/{}", BASE_URL, n, INFO_0_JSON)
+        } else {
+            format!("{}/{}", BASE_URL, INFO_0_JSON)
+        };
+
+        let http_client = reqwest::blocking::ClientBuilder::new()
+            .timeout(Duration::from_secs(self.args.timeout))
+            .build()?;
+        let response: String = http_client.get(&url).send()?.text()?;
+        let comic_response: ComicResponse = ComicResponse::try_from(response)?;
+        let comic: Comic = comic_response.into();
+        if self.args.save {
+            comic.save()?;
+        }
+        comic.print(self.args.output)?;
+
+        Ok(())
     }
 }
 
